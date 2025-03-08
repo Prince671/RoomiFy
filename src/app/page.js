@@ -2,15 +2,15 @@
 
 import { useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 
 const textGradients = [
-  "from-pink-500 to-red-400",
-  "from-purple-500 to-blue-400",
-  "from-yellow-400 to-orange-500",
-  "from-green-400 to-teal-500",
-  "from-rose-400 to-pink-600",
-  "from-fuchsia-500 to-violet-400",
+  "text-pink-500",
+  "text-purple-500",
+  "text-yellow-400",
+  "text-green-400",
+  "text-rose-400",
+  "text-fuchsia-500",
 ];
 
 const bgGradients = [
@@ -36,6 +36,8 @@ const slogans = [
   "RoomiFy – Where Music and Moments Collide.",
 ];
 
+const rooms = ["room-abc123", "room-def456"]; // Sample array of valid room IDs
+
 const Page = () => {
   const router = useRouter();
   const [roomId, setRoomId] = useState("");
@@ -43,6 +45,7 @@ const Page = () => {
   const [textGradientIndex, setTextGradientIndex] = useState(0);
   const [bgGradientIndex, setBgGradientIndex] = useState(0);
   const [sloganIndex, setSloganIndex] = useState(0);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     setTimeout(() => setLoading(false), 2500);
@@ -56,6 +59,25 @@ const Page = () => {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (errorMessage) {
+      const timer = setTimeout(() => {
+        setErrorMessage("");
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [errorMessage]);
+
+  const handleJoinRoom = () => {
+    if (!roomId) {
+      setErrorMessage("Please enter a room ID");
+    } else if (!rooms.includes(roomId)) {
+      setErrorMessage("Room ID invalid, please enter a valid room ID");
+    } else {
+      router.push(`/room/${roomId}`);
+    }
+  };
 
   return (
     <motion.div
@@ -98,7 +120,7 @@ const Page = () => {
             className="text-center relative"
           >
             <motion.h1
-              className={`lg:text-[140px] text-[60px] font-bold text-transparent bg-clip-text bg-gradient-to-r ${textGradients[textGradientIndex]} font-serif`}
+              className={`lg:text-[140px] text-[60px] font-bold ${textGradients[textGradientIndex]} font-serif`}
             >
               RoomiFy
             </motion.h1>
@@ -141,10 +163,23 @@ const Page = () => {
               />
               <button
                 className="bg-gradient-to-r px-12 py-4 from-purple-500 to-purple-700 text-white font-semibold rounded-full shadow-2xl transition transform hover:scale-110"
-                onClick={() => router.push(`/room/${roomId}`)}
+                onClick={handleJoinRoom}
               >
                 Join a room
               </button>
+              <AnimatePresence>
+                {errorMessage && (
+                  <motion.p
+                    initial={{ opacity: 1, y: 0 }}
+                    animate={{ opacity: 1, y: -10 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    transition={{ duration: 0.5, ease: "easeInOut" }}
+                    className="text-red-500 text-sm mt-2"
+                  >
+                    {errorMessage}
+                  </motion.p>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         </div>
