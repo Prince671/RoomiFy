@@ -1,86 +1,124 @@
-const io = require("socket.io")(process.env.PORT || 3001, {
-    cors: {
-      // origin: "http://localhost:3000",
-      origin: "https://love-tunes-brown.vercel.app",
-    },
-  });
-  
-  let roomVideoState = {};  // Store the current video state per room
-  let roomMessages = {};  // Store the messages per room
-  
-  io.on("connection", (socket) => {
-    console.log("User connected:", socket.id);
-  
-    // Handle user joining a room
-    socket.on("join-room", (roomId) => {
-      socket.join(roomId);
-      io.to(roomId).emit("room-users", getUsersInRoom(roomId));
-  
-      // Send current video state to the new user
-      if (roomVideoState[roomId]) {
-        const { videoId, isPlaying } = roomVideoState[roomId];
-        socket.emit("play-video", videoId);
-        socket.emit("video-state", isPlaying);
-      }
-  
-      // Send previous messages to the new user
-      if (roomMessages[roomId]) {
-        socket.emit("receive-message", roomMessages[roomId]);
-      }
-    });
-  
-    // Handle video play event
-    socket.on("play-video", (roomId, videoId, videoTitle) => {
-      if (!videoId) {
-        console.error("Received undefined videoId in play-video event");
-        return;
-      }
-  
-      console.log("play-video:", videoId, videoTitle);
-  
-      roomVideoState[roomId] = { videoId, isPlaying: true };
-      io.to(roomId).emit("play-video", videoId, videoTitle);
-      io.to(roomId).emit("video-state", true);
-    });
-  
-    // Handle video pause event
-    socket.on("pause-video", (roomId) => {
-      if (!roomVideoState[roomId]) {
-        console.error(`Room ${roomId} video state not found`);
-        return;
-      }
-  
-      roomVideoState[roomId].isPlaying = false;
-      io.to(roomId).emit("pause-video");
-      io.to(roomId).emit("video-state", false);
-    });
-  
-    // Handle message sending
-    socket.on("send-message", (data) => {
-      const { roomId, message, senderId, type, content } = data;
-  
-      console.log("Received message:", data);
-  
-      if (!roomMessages[roomId]) {
-        roomMessages[roomId] = [];
-      }
-  
-      // Store the message with type
-      roomMessages[roomId].push({ type, message, senderId, content });
-  
-      // Broadcast the message to everyone in the room
-      io.to(roomId).emit("receive-message", { type, message, senderId, content });
-    });
-  
-    // Handle user disconnection
-    socket.on("disconnect", () => {
-      console.log("User disconnected:", socket.id);
-    });
-  });
-  
-  // Helper function to get users in a room
-  function getUsersInRoom(roomId) {
-    const clients = io.sockets.adapter.rooms.get(roomId);
-    return clients ? Array.from(clients) : [];
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*", // Adjust this for production
+    methods: ["GET", "POST"]
   }
-  
+});
+
+const rooms = new Map(); // Store room data
+const ROOM_PASSWORD = "admin123"; // Hardcoded for simplicity, use a database in production
+
+io.on('connection', (socket) => {
+  console.log('A user connected:', socket.id);
+
+  socket.on('join-room', (roomId) => {
+    socket.join(roomId);
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, { users: new Set(), messages: [] });
+    }
+    const room = rooms.get(roomId);
+    room.users.add(socket.id);
+    io.to(roomId).emit('room-users', Array.from(room.users));
+    socket.broadcast.to(roomId).emit('user-joined', socket.id);
+  });
+
+  socket.on('set-username', ({ roomId, userId, username }) => {
+    socket.data.username = username;
+    io.to(roomId).emit('username-update', { userId: socket.id, username });
+  });
+
+  socket.on('send-message', (data) => {
+    const room = rooms.get(data.roomId);
+    if (room) {
+      room.messages.push(data);
+      io.to(data.roomId).emit('receive-message', data);
+    }
+  });
+
+  socket.on('typing', ({ roomId, senderId }) => {
+    socket.broadcast.to(roomId).emit('typing', senderId);
+  });
+
+  socket.on('stop-typing', ({ roomId, senderId }) => {
+    socket.broadcast.to(roomId).emit('stop-typing', senderId);
+  });
+
+  socket.on('play-video', (roomId, videoId, videoTitle) => {
+    io.to(roomId).emit('play-video', videoId, videoTitle);
+  });
+
+  socket.on('pause-video', (roomId) => {
+    io.to(roomId).emit('pause-video');
+  });
+
+  socket.on('message-selected', ({ roomId, messageId, senderId }) => {
+    socket.broadcast.to(roomId).emit('message-selected', { messageId, senderId });
+  });
+
+  socket.on('message-deleted', ({ roomId, messageId, deleteFor, deletedBy }) => {
+    const room = rooms.get(roomId);
+    if (room) {
+      if (deleteFor === "everyone") {
+        room.messages = room.messages.map(msg => 
+          msg.messageId === messageId ? { ...msg, type: "system", message: "This message was deleted" } : msg
+        );
+      } else {
+        room.messages = room.messages.filter(msg => msg.messageId !== messageId);
+      }
+      io.to(roomId).emit('message-deleted', { messageId, deleteFor, deletedBy });
+    }
+  });
+
+  socket.on('message-reaction', ({ roomId, messageId, userId, reaction }) => {
+    io.to(roomId).emit('message-reaction', { messageId, userId, reaction });
+  });
+
+  socket.on('message-pinned', ({ roomId, messageId, isPinned }) => {
+    io.to(roomId).emit('message-pinned', { messageId, isPinned });
+  });
+
+  socket.on('destroy-room', ({ roomId, password }) => {
+    if (password === ROOM_PASSWORD) {
+      const room = rooms.get(roomId);
+      if (room) {
+        io.to(roomId).emit('room-destroyed');
+        rooms.delete(roomId);
+        io.in(roomId).socketsLeave(roomId);
+        console.log(`Room ${roomId} destroyed`);
+      }
+    } else {
+      socket.emit('destroy-room-error', 'Incorrect password');
+    }
+  });
+
+  socket.on('leave-room', (roomId) => {
+    const room = rooms.get(roomId);
+    if (room && room.users.has(socket.id)) {
+      room.users.delete(socket.id);
+      io.to(roomId).emit('user-left', socket.id);
+      socket.leave(roomId);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+    rooms.forEach((room, roomId) => {
+      if (room.users.has(socket.id)) {
+        room.users.delete(socket.id);
+        io.to(roomId).emit('user-left', socket.id);
+        io.to(roomId).emit('room-users', Array.from(room.users));
+      }
+    });
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
