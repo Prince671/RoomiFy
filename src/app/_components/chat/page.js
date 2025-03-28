@@ -1471,5 +1471,4 @@ const ChatRoom = ({ roomId, hostname: initialHostname = "Unknown Host" }) => {
     </div>
   );
 };
-
 export default ChatRoom;
